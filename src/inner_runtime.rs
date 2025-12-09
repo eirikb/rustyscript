@@ -671,14 +671,8 @@ impl<RT: RuntimeTrait> InnerRuntime<RT> {
                 return Poll::Ready(t.map_err(Into::into));
             }
 
-            if self
-                .deno_runtime()
-                .poll_event_loop(cx, poll_options)
-                .is_ready()
-            {
-                // Event loop resolved - continue
-                println!("Event loop resolved");
-            }
+            // Poll event loop to process pending async work
+            let _ = self.deno_runtime().poll_event_loop(cx, poll_options);
 
             Poll::Pending
         })
