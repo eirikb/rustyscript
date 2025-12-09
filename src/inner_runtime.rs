@@ -659,8 +659,8 @@ impl<RT: RuntimeTrait> InnerRuntime<RT> {
                             return Poll::Ready(Err(e.into()));
                         }
                         Poll::Ready(Ok(())) => {
-                            // Continue polling if there's more work.
-                            continue;
+                            // Event loop completed - no more work.
+                            break;
                         }
                         Poll::Pending => {
                             // No more work—break out.
