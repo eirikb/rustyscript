@@ -663,14 +663,10 @@ impl<RT: RuntimeTrait> InnerRuntime<RT> {
                             break;
                         }
                         Poll::Pending => {
-                            // No more work—break out.
+                            // No more work right now—break out.
                             break;
                         }
                     }
-                }
-                if iterations >= 100 {
-                    // Hit iteration limit—warn and continue.
-                    println!("Warning: exceeded event loop iteration limit");
                 }
                 return Poll::Ready(t.map_err(Into::into));
             }
