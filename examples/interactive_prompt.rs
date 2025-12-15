@@ -1,3 +1,6 @@
+//!
+//! This example demonstrates an interactive prompt for evaluating JavaScript expressions
+//!
 use rustyscript::{Runtime, RuntimeOptions};
 
 fn main() {
@@ -33,7 +36,7 @@ fn interactive_prompt() {
             // Process the next command
             let input = cmd.trim();
             match runtime.eval::<ResponseType>(input) {
-                Ok(value) => println!("{}\n", value),
+                Ok(value) => println!("{value}\n"),
                 Err(e) => eprintln!("{}\n", e.as_highlighted(Default::default())),
             }
         }
@@ -54,7 +57,7 @@ fn next_command() -> String {
         }
     }
 
-    return input.trim().to_string();
+    input.trim().to_string()
 }
 
 #[derive(serde::Deserialize, serde::Serialize)]
@@ -72,10 +75,10 @@ enum ResponseType {
 impl std::fmt::Display for ResponseType {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            ResponseType::String(s) => write!(f, "{}", s)?,
-            ResponseType::Float(n) => write!(f, "{}", n)?,
-            ResponseType::Int(n) => write!(f, "{}", n)?,
-            ResponseType::Bool(b) => write!(f, "{}", b)?,
+            ResponseType::String(s) => write!(f, "{s}")?,
+            ResponseType::Float(n) => write!(f, "{n}")?,
+            ResponseType::Int(n) => write!(f, "{n}")?,
+            ResponseType::Bool(b) => write!(f, "{b}")?,
             ResponseType::Null => write!(f, "")?,
 
             ResponseType::Array(a) => {
@@ -85,7 +88,7 @@ impl std::fmt::Display for ResponseType {
                     .map(|x| format!("{x:?}"))
                     .collect::<Vec<_>>()
                     .join(", ");
-                write!(f, "{}]", parts)?;
+                write!(f, "{parts}]")?;
             }
 
             ResponseType::Map(m) => {
@@ -95,7 +98,7 @@ impl std::fmt::Display for ResponseType {
                     .map(|(k, v)| format!("{k}: {v:?}"))
                     .collect::<Vec<_>>()
                     .join(", ");
-                write!(f, "{}", parts)?;
+                write!(f, "{parts}")?;
                 write!(f, "}}")?;
             }
         }
@@ -113,7 +116,7 @@ impl std::fmt::Debug for ResponseType {
                     .replace('\r', "\\r")
                     .replace('\t', "\\t")
                     .replace('\"', "\\\"");
-                write!(f, "\"{}\"", s)?;
+                write!(f, "\"{s}\"")?;
             }
 
             ResponseType::Null => write!(f, "")?,

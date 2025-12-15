@@ -9,6 +9,8 @@ on:
     branches: [ master ]
   pull_request:
     branches: [ master ]
+  workflow_dispatch:
+  workflow_call:
 
 env:
   CARGO_TERM_COLOR: always
@@ -89,3 +91,4 @@ jobs:
 
     - name: websocket
       run: cargo run --example websocket --features="web websocket"
+

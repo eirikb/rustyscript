@@ -1,6 +1,7 @@
-use super::ExtensionTrait;
 use deno_core::{extension, Extension};
 use deno_cron::local::LocalCronHandler;
+
+use super::ExtensionTrait;
 
 extension!(
     init_cron,
@@ -10,12 +11,12 @@ extension!(
 );
 impl ExtensionTrait<()> for init_cron {
     fn init((): ()) -> Extension {
-        init_cron::init_ops_and_esm()
+        init_cron::init()
     }
 }
 impl ExtensionTrait<()> for deno_cron::deno_cron {
     fn init((): ()) -> Extension {
-        deno_cron::deno_cron::init_ops_and_esm(LocalCronHandler::new())
+        deno_cron::deno_cron::init(LocalCronHandler::new())
     }
 }
 

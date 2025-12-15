@@ -1,10 +1,15 @@
 //! Contains the error type for the runtime
 //! And some associated utilities
-use crate::Module;
+use std::path::PathBuf;
+
+use deno_core::error::CoreErrorKind;
 use thiserror::Error;
 
+use crate::Module;
+
 /// Options for [`Error::as_highlighted`]
-#[derive(Debug, Clone, Copy)]
+#[allow(clippy::struct_excessive_bools)]
+#[derive(Debug, Clone)]
 pub struct ErrorFormattingOptions {
     /// Include the filename in the output
     /// Appears on the first line
@@ -17,6 +22,12 @@ pub struct ErrorFormattingOptions {
     /// Include the column number in the output
     /// Appears on the first line
     pub include_column_number: bool,
+
+    /// Hide the current directory in the output
+    pub hide_current_directory: bool,
+
+    /// Used to set the directory to remove, in cases where the runtime and system CWD differ
+    pub current_directory: Option<PathBuf>,
 }
 impl Default for ErrorFormattingOptions {
     fn default() -> Self {
@@ -24,56 +35,76 @@ impl Default for ErrorFormattingOptions {
             include_filename: true,
             include_line_number: true,
             include_column_number: true,
+
+            hide_current_directory: false,
+            current_directory: None,
         }
     }
 }
 
 /// Represents the errors that can occur during execution of a module
-#[derive(Error, Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[derive(Error, Debug, Clone, serde::Serialize, serde::Deserialize, deno_error::JsError)]
 pub enum Error {
     /// Triggers when a module has no stated entrypoint (default or registered at runtime)
+    #[class(generic)]
     #[error("{0} has no entrypoint. Register one, or add a default to the runtime")]
     MissingEntrypoint(Module),
 
     /// Triggers when an attempt to find a value by name fails
+    #[class(generic)]
     #[error("{0} could not be found in global, or module exports")]
     ValueNotFound(String),
 
     /// Triggers when attempting to call a value as a function
+    #[class(generic)]
     #[error("{0} is not a function")]
     ValueNotCallable(String),
 
     /// Triggers when a string could not be encoded for v8
+    #[class(generic)]
     #[error("{0} could not be encoded as a v8 value")]
     V8Encoding(String),
 
     /// Triggers when a result could not be deserialize to the requested type
+    #[class(generic)]
     #[error("value could not be deserialized: {0}")]
     JsonDecode(String),
 
     /// Triggers when a module could not be loaded from the filesystem
+    #[class(generic)]
     #[error("{0}")]
     ModuleNotFound(String),
 
     /// Triggers when attempting to use a worker that has already been shutdown
+    #[class(generic)]
     #[error("This worker has been destroyed")]
     WorkerHasStopped,
 
     /// Triggers on runtime issues during execution of a module
+    #[class(generic)]
     #[error("{0}")]
     Runtime(String),
 
     /// Runtime error we successfully downcast
+    #[class(generic)]
     #[error("{0}")]
-    JsError(#[from] deno_core::error::JsError),
+    JsError(Box<deno_core::error::JsError>),
 
     /// Triggers when a module times out before finishing
+    #[class(generic)]
     #[error("Module timed out: {0}")]
     Timeout(String),
 
     /// Triggers when the heap (via `max_heap_size`) is exhausted during execution
+    #[class(generic)]
     #[error("Heap exhausted")]
     HeapExhausted,
+}
+
+impl From<deno_core::error::JsError> for Error {
+    fn from(err: deno_core::error::JsError) -> Self {
+        Self::JsError(Box::new(err))
+    }
 }
 
 impl Error {
@@ -89,7 +120,7 @@ impl Error {
     /// Otherwise, it will just display the error message normally
     #[must_use]
     pub fn as_highlighted(&self, options: ErrorFormattingOptions) -> String {
-        if let Error::JsError(e) = self {
+        let mut e = if let Error::JsError(e) = self {
             // Extract basic information about position
             let (filename, row, col) = match e.frames.first() {
                 Some(f) => (
@@ -159,7 +190,7 @@ impl Error {
             let position_part = format!("{line_number_part}{col_number_part}");
             let position_part = match filename {
                 None if position_part.is_empty() => String::new(),
-                Some(f) if options.include_filename => format!("{f}:{position_part}\n"),
+                Some(f) if options.include_filename => format!("At {f}:{position_part}\n"),
                 _ => format!("At {position_part}\n"),
             };
 
@@ -167,7 +198,20 @@ impl Error {
             format!("{position_part}{source_line_part}{msg_part}",)
         } else {
             self.to_string()
+        };
+
+        //
+        // Hide directory
+        if options.hide_current_directory {
+            let dir = options.current_directory.or(std::env::current_dir().ok());
+            if let Some(dir) = dir {
+                let dir = dir.to_string_lossy().replace('\\', "/");
+                e = e.replace(&dir, "");
+                e = e.replace("file:////", "file:///");
+            }
         }
+
+        e
     }
 }
 
@@ -186,6 +230,19 @@ mod error_macro {
     }
 }
 
+#[cfg(feature = "node_experimental")]
+map_error!(node_resolver::analyze::TranslateCjsToEsmError, |e| {
+    Error::Runtime(e.to_string())
+});
+
+map_error!(deno_ast::TranspileError, |e| Error::Runtime(e.to_string()));
+map_error!(deno_core::error::CoreError, |e| {
+    let e = e.into_kind();
+    match e {
+        CoreErrorKind::Js(js_error) => Error::JsError(Box::new(js_error)),
+        _ => Error::Runtime(e.to_string()),
+    }
+});
 map_error!(std::cell::BorrowMutError, |e| Error::Runtime(e.to_string()));
 map_error!(std::io::Error, |e| Error::ModuleNotFound(e.to_string()));
 map_error!(deno_core::v8::DataError, |e| Error::Runtime(e.to_string()));
@@ -203,12 +260,7 @@ map_error!(deno_core::serde_v8::Error, |e| Error::JsonDecode(
 ));
 
 map_error!(deno_core::anyhow::Error, |e| {
-    // trydowncast to deno_core::error::JsError
-    let s = e.to_string();
-    match e.downcast::<deno_core::error::JsError>() {
-        Ok(js_error) => Error::JsError(js_error),
-        Err(_) => Error::Runtime(s),
-    }
+    Error::Runtime(e.to_string())
 });
 
 map_error!(tokio::time::error::Elapsed, |e| {
@@ -248,6 +300,18 @@ mod test {
         });
         assert_eq!(e, concat!(
             "At 2:4:\n",
+            "| 1 + x\n",
+            "|     ^\n",
+            "= Uncaught (in promise) ReferenceError: x is not defined"
+        ));
+
+        let module = Module::new("test.js", "1+1;\n1 + x");
+        let e = runtime.load_module(&module).unwrap_err().as_highlighted(ErrorFormattingOptions {
+            hide_current_directory: true,
+            ..Default::default()
+        });
+        assert_eq!(e, concat!(
+            "At file:///test.js:2:4:\n",
             "| 1 + x\n",
             "|     ^\n",
             "= Uncaught (in promise) ReferenceError: x is not defined"

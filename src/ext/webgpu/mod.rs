@@ -1,5 +1,6 @@
-use super::ExtensionTrait;
 use deno_core::{extension, Extension};
+
+use super::ExtensionTrait;
 
 extension!(
     init_webgpu,
@@ -9,12 +10,12 @@ extension!(
 );
 impl ExtensionTrait<()> for init_webgpu {
     fn init((): ()) -> Extension {
-        init_webgpu::init_ops_and_esm()
+        init_webgpu::init()
     }
 }
 impl ExtensionTrait<()> for deno_webgpu::deno_webgpu {
     fn init((): ()) -> Extension {
-        deno_webgpu::deno_webgpu::init_ops_and_esm()
+        deno_webgpu::deno_webgpu::init()
     }
 }
 

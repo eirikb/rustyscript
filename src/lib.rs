@@ -288,6 +288,9 @@
 #![allow(clippy::module_name_repetitions)] //   Does not account for crate-level re-exports
 #![allow(clippy::inline_always)] //             Does not account for deno_core's use of inline(always) on op2
 #![allow(clippy::needless_pass_by_value)] //    Disabling some features can trigger this
+#![allow(clippy::result_large_err)] //          Some Deno types trigger this
+#![allow(clippy::doc_comment_double_space_linebreaks)]
+#![allow(clippy::doc_overindented_list_items)]
 #![cfg_attr(docsrs, feature(doc_cfg))]
 
 #[cfg(feature = "snapshot_builder")]
@@ -392,23 +395,24 @@ pub mod extensions {
 #[cfg_attr(docsrs, doc(cfg(feature = "kv")))]
 pub use ext::kv::{KvConfig, KvStore};
 
-#[cfg(feature = "cache")]
-#[cfg_attr(docsrs, doc(cfg(feature = "cache")))]
-pub use ext::cache::CacheBackend;
+//#[cfg(feature = "cache")]
+//#[cfg_attr(docsrs, doc(cfg(feature = "cache")))]
+//pub use ext::cache::CacheBackend;
 
 #[cfg(feature = "node_experimental")]
 #[cfg_attr(docsrs, doc(cfg(feature = "node_experimental")))]
-pub use ext::node::RustyResolver;
+pub use ext::node::resolvers::RustyResolver;
 
 #[cfg(feature = "web")]
 #[cfg_attr(docsrs, doc(cfg(feature = "web")))]
 pub use ext::web::{
-    AllowlistWebPermissions, DefaultWebPermissions, PermissionDenied, SystemsPermissionKind,
-    WebOptions, WebPermissions,
+    AllowlistWebPermissions, CheckedPath, DefaultWebPermissions, PermissionCheckError,
+    PermissionDeniedError, SystemsPermissionKind, WebOptions, WebPermissions,
 };
 pub use ext::ExtensionOptions;
 
 // Expose some important stuff from us
+pub use async_bridge::TokioRuntime;
 pub use error::Error;
 pub use inner_runtime::{RsAsyncFunction, RsFunction};
 pub use module::Module;
@@ -425,12 +429,11 @@ pub use ext::broadcast_channel::BroadcastChannelWrapper;
 #[cfg_attr(docsrs, doc(cfg(feature = "web")))]
 pub use hyper_util;
 
+#[cfg(feature = "op_whitelist")]
+pub mod op_whitelist;
+
 #[cfg(test)]
 mod test {
-    use crate::{include_module, Error, Module, Runtime, RuntimeOptions};
-
-    static WHITELIST: Module = include_module!("op_whitelist.js");
-
     #[test]
     fn test_readme_deps() {
         version_sync::assert_markdown_deps_updated!("readme.md");
@@ -439,33 +442,5 @@ mod test {
     #[test]
     fn test_html_root_url() {
         version_sync::assert_html_root_url_updated!("src/lib.rs");
-    }
-
-    #[test]
-    #[cfg(not(feature = "web"))]
-    fn check_op_whitelist() {
-        let inner = || -> Result<(), Error> {
-            let mut runtime = Runtime::new(RuntimeOptions::default())?;
-            runtime.load_module(&WHITELIST)?;
-            let hnd = runtime.load_module(&Module::new(
-                "test_whitelist.js",
-                "
-                import { whitelist } from './op_whitelist.js';
-                let ops = Deno.core.ops.op_op_names();
-                export const unsafe_ops = ops.filter(op => !whitelist.hasOwnProperty(op));
-            ",
-            ))?;
-
-            let unsafe_ops: Vec<String> = runtime.get_value(Some(&hnd), "unsafe_ops")?;
-
-            if !unsafe_ops.is_empty() {
-                println!("Found unsafe ops: {unsafe_ops:?}.\nOnce confirmed safe, add them to `src/op_whitelist.js`");
-                std::process::exit(1);
-            }
-
-            Ok(())
-        };
-
-        inner().expect("Could not verify op safety");
     }
 }

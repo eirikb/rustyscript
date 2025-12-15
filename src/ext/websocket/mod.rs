@@ -1,6 +1,7 @@
-use super::{web::PermissionsContainer, web::WebOptions, ExtensionTrait};
 use deno_core::{extension, url::Url, Extension};
 use deno_permissions::PermissionCheckError;
+
+use super::{web::PermissionsContainer, web::WebOptions, ExtensionTrait};
 
 impl deno_websocket::WebSocketPermissions for PermissionsContainer {
     fn check_net_url(&mut self, url: &Url, api_name: &str) -> Result<(), PermissionCheckError> {
@@ -17,12 +18,12 @@ extension!(
 );
 impl ExtensionTrait<()> for init_websocket {
     fn init((): ()) -> Extension {
-        init_websocket::init_ops_and_esm()
+        init_websocket::init()
     }
 }
 impl ExtensionTrait<WebOptions> for deno_websocket::deno_websocket {
     fn init(options: WebOptions) -> Extension {
-        deno_websocket::deno_websocket::init_ops_and_esm::<PermissionsContainer>(
+        deno_websocket::deno_websocket::init::<PermissionsContainer>(
             options.user_agent,
             options.root_cert_store_provider,
             options.unsafely_ignore_certificate_errors,

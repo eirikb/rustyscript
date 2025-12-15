@@ -1,7 +1,11 @@
+use std::{borrow::Cow, path::Path};
+
+use deno_core::{
+    v8::{self, HandleScope},
+    ModuleSpecifier,
+};
+
 use crate::Error;
-use deno_core::v8::{self, HandleScope};
-use deno_core::ModuleSpecifier;
-use std::path::Path;
 
 /// Converts a string representing a relative or absolute path into a
 /// `ModuleSpecifier`. A relative path is considered relative to the passed
@@ -13,9 +17,12 @@ fn resolve_path(
     current_dir: &Path,
 ) -> Result<ModuleSpecifier, deno_core::ModuleResolutionError> {
     let path = current_dir.join(path_str);
-    let path = deno_core::normalize_path(path);
-    deno_core::url::Url::from_file_path(&path)
-        .map_err(|()| deno_core::ModuleResolutionError::InvalidPath(path))
+    let path = deno_core::normalize_path(Cow::Owned(path));
+    deno_core::url::Url::from_file_path(&path).map_err(|()| {
+        deno_core::ModuleResolutionError::InvalidUrl(
+            deno_core::url::ParseError::RelativeUrlWithoutBase,
+        )
+    })
 }
 
 pub trait ToModuleSpecifier {

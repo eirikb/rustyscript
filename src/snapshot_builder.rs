@@ -1,11 +1,13 @@
+use std::{path::Path, rc::Rc, time::Duration};
+
+use deno_core::{JsRuntimeForSnapshot, PollEventLoopOptions};
+use tokio_util::sync::CancellationToken;
+
 use crate::{
-    async_bridge::{AsyncBridge, AsyncBridgeExt},
+    async_bridge::{AsyncBridge, AsyncBridgeExt, TokioRuntime},
     inner_runtime::{InnerRuntime, RuntimeOptions},
     Error, Module, ModuleHandle,
 };
-use deno_core::{JsRuntimeForSnapshot, PollEventLoopOptions};
-use std::{path::Path, rc::Rc, time::Duration};
-use tokio_util::sync::CancellationToken;
 
 /// A more restricted version of the `Runtime` struct that is used to create a snapshot of the runtime state
 /// This runtime should ONLY be used to create a snapshot, and not for normal use
@@ -109,6 +111,20 @@ impl SnapshotBuilder {
         Ok(Self { inner, tokio })
     }
 
+    /// Creates a new instance of the runtime with the provided options and a borrowed tokio runtime handle.  
+    /// See [`Runtime::new`] for more information.
+    ///
+    /// # Errors
+    /// Can fail if the deno runtime initialization fails (usually issues with extensions)
+    pub fn with_tokio_runtime_handle(
+        options: RuntimeOptions,
+        handle: tokio::runtime::Handle,
+    ) -> Result<Self, Error> {
+        let tokio = AsyncBridge::with_runtime_handle(options.timeout, handle);
+        let inner = InnerRuntime::new(options, tokio.heap_exhausted_token())?;
+        Ok(Self { inner, tokio })
+    }
+
     /// Access the underlying deno runtime instance directly
     pub fn deno_runtime(&mut self) -> &mut deno_core::JsRuntime {
         self.inner.deno_runtime()
@@ -116,7 +132,7 @@ impl SnapshotBuilder {
 
     /// Access the underlying tokio runtime used for blocking operations
     #[must_use]
-    pub fn tokio_runtime(&self) -> std::rc::Rc<tokio::runtime::Runtime> {
+    pub fn tokio_runtime(&self) -> TokioRuntime {
         self.tokio.tokio_runtime()
     }
 
@@ -136,7 +152,7 @@ impl SnapshotBuilder {
     /// Destroy the v8 runtime, releasing all resources
     /// Then the internal tokio runtime will be returned
     #[must_use]
-    pub fn into_tokio_runtime(self) -> Rc<tokio::runtime::Runtime> {
+    pub fn into_tokio_runtime(self) -> TokioRuntime {
         self.tokio.into_tokio_runtime()
     }
 
@@ -797,8 +813,7 @@ impl SnapshotBuilder {
     /// `include_bytes!`
     ///
     /// WARNING: In order to use the snapshot, make sure the runtime using it is
-    /// provided the same extensions and options as the original runtime. Any extensions
-    /// you provided must be loaded with `init_ops` instead of `init_ops_and_esm`.
+    /// provided the same extensions and options as the original runtime.
     #[must_use]
     pub fn finish(self) -> Box<[u8]> {
         let deno_rt: JsRuntimeForSnapshot = self.inner.into_inner();

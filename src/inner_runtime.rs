@@ -1,3 +1,21 @@
+use std::{
+    collections::{HashMap, HashSet},
+    path::{Path, PathBuf},
+    pin::Pin,
+    rc::Rc,
+    sync::Arc,
+    task::Poll,
+    time::Duration,
+};
+
+use deno_core::{
+    futures::FutureExt, serde_json, serde_v8::from_v8, v8, JsRuntime, JsRuntimeForSnapshot,
+    PollEventLoopOptions,
+};
+use deno_features::FeatureChecker;
+use serde::de::DeserializeOwned;
+use tokio_util::sync::CancellationToken;
+
 use crate::{
     ext,
     module_loader::{LoaderOptions, RustyLoader},
@@ -5,20 +23,6 @@ use crate::{
     transpiler::transpile,
     utilities, Error, ExtensionOptions, Module, ModuleHandle,
 };
-use deno_core::{
-    futures::FutureExt, serde_json, serde_v8::from_v8, v8, FeatureChecker, JsRuntime,
-    JsRuntimeForSnapshot, PollEventLoopOptions,
-};
-use serde::de::DeserializeOwned;
-use std::{
-    collections::{HashMap, HashSet},
-    path::{Path, PathBuf},
-    pin::Pin,
-    rc::Rc,
-    task::Poll,
-    time::Duration,
-};
-use tokio_util::sync::CancellationToken;
 
 /// Wrapper trait to make the `InnerRuntime` generic over the runtime types
 pub trait RuntimeTrait {
@@ -126,6 +130,11 @@ pub struct RuntimeOptions {
     pub timeout: Duration,
 
     /// Optional maximum heap size for the runtime
+    ///
+    /// If the heap size is exceeded, the runtime will return a `HeapExhausted` error.
+    ///
+    /// **WARNING** this is not a minimum heap size; the underlying V8 isolate will still crash if this number is too small for startup
+    /// (~5mb with default features)
     pub max_heap_size: Option<usize>,
 
     /// Optional cache provider for the module loader
@@ -137,8 +146,7 @@ pub struct RuntimeOptions {
 
     /// Optional snapshot to load into the runtime
     ///
-    /// This will reduce load times, but requires the same extensions to be loaded as when the snapshot was created  
-    /// If provided, user-supplied extensions must be instantiated with `init_ops` instead of `init_ops_and_esm`
+    /// This will reduce load times, but requires the same extensions to be loaded as when the snapshot was created
     ///
     /// WARNING: Snapshots MUST be used on the same system they were created on
     pub startup_snapshot: Option<&'static [u8]>,
@@ -211,13 +219,6 @@ impl<RT: RuntimeTrait> InnerRuntime<RT> {
             ..Default::default()
         }));
 
-        // Init otel
-        #[cfg(feature = "web")]
-        {
-            let otel_conf = options.extension_options.web.telemetry_config.clone();
-            deno_telemetry::init(otel_conf)?;
-        }
-
         // If a snapshot is provided, do not reload ESM for extensions
         let is_snapshot = options.startup_snapshot.is_some();
         let extensions = ext::all_extensions(
@@ -246,13 +247,8 @@ impl<RT: RuntimeTrait> InnerRuntime<RT> {
             }
         };
 
-        let mut feature_checker = FeatureChecker::default();
-        feature_checker.set_exit_cb(Box::new(|_, _| {}));
-
         let mut deno_runtime = RT::try_new(deno_core::RuntimeOptions {
             module_loader: Some(module_loader.clone()),
-
-            feature_checker: Some(feature_checker.into()),
 
             extension_transpiler: Some(module_loader.as_extension_transpiler()),
             create_params: isolate_params,
@@ -263,6 +259,14 @@ impl<RT: RuntimeTrait> InnerRuntime<RT> {
 
             ..Default::default()
         })?;
+
+        let mut feature_checker = FeatureChecker::default();
+        feature_checker.set_exit_cb(Box::new(|_, _| {}));
+        deno_runtime
+            .rt_mut()
+            .op_state()
+            .borrow_mut()
+            .put(Arc::new(feature_checker));
 
         // Add a callback to terminate the runtime if the max_heap_size limit is approached
         if options.max_heap_size.is_some() {
@@ -1256,6 +1260,27 @@ mod test_inner_runtime {
             let result: usize = result.resolve(rt.deno_runtime()).await?;
             assert_eq!(2, result);
 
+            Ok(())
+        });
+    }
+
+    #[test]
+    fn test_deep_error() {
+        let module = Module::new(
+            "test.js",
+            "
+            await new Promise(r => setTimeout(r)); throw 'huh';
+        ",
+        );
+
+        let mut runtime =
+            InnerRuntime::<JsRuntime>::new(RuntimeOptions::default(), CancellationToken::new())
+                .expect("Could not load runtime");
+
+        let rt = &mut runtime;
+        run_async_task(|| async move {
+            let result = rt.load_modules(Some(&module), vec![]).await;
+            assert!(result.is_err());
             Ok(())
         });
     }

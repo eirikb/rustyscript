@@ -1,9 +1,10 @@
-use super::ExtensionTrait;
 use deno_core::{extension, Extension};
 
-mod cache_backend;
-mod memory;
-pub use cache_backend::CacheBackend;
+use super::ExtensionTrait;
+
+//mod cache_backend;
+//mod memory;
+//pub use cache_backend::CacheBackend;
 
 extension!(
     init_cache,
@@ -13,24 +14,24 @@ extension!(
 );
 impl ExtensionTrait<()> for init_cache {
     fn init((): ()) -> Extension {
-        init_cache::init_ops_and_esm()
+        init_cache::init()
     }
 }
-impl ExtensionTrait<Option<deno_cache::CreateCache<CacheBackend>>> for deno_cache::deno_cache {
-    fn init(options: Option<deno_cache::CreateCache<CacheBackend>>) -> Extension {
-        deno_cache::deno_cache::init_ops_and_esm::<CacheBackend>(options)
+impl ExtensionTrait<Option<deno_cache::CreateCache>> for deno_cache::deno_cache {
+    fn init(options: Option<deno_cache::CreateCache>) -> Extension {
+        deno_cache::deno_cache::init(options)
     }
 }
 
-pub fn extensions(
-    options: Option<deno_cache::CreateCache<CacheBackend>>,
-    is_snapshot: bool,
-) -> Vec<Extension> {
+pub fn extensions(options: Option<deno_cache::CreateCache>, is_snapshot: bool) -> Vec<Extension> {
     vec![
         deno_cache::deno_cache::build(options, is_snapshot),
         init_cache::build((), is_snapshot),
     ]
 }
+
+/*
+Custom caches were removed by deno
 
 #[cfg(test)]
 mod test {
@@ -57,3 +58,4 @@ mod test {
         runtime.load_module(&module).unwrap();
     }
 }
+*/

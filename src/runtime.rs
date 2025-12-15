@@ -1,12 +1,14 @@
+use std::{path::Path, rc::Rc, time::Duration};
+
+use deno_core::PollEventLoopOptions;
+use tokio_util::sync::CancellationToken;
+
 use crate::{
-    async_bridge::{AsyncBridge, AsyncBridgeExt},
+    async_bridge::{AsyncBridge, AsyncBridgeExt, TokioRuntime},
     inner_runtime::{InnerRuntime, RsAsyncFunction, RsFunction},
     js_value::Function,
     Error, Module, ModuleHandle,
 };
-use deno_core::PollEventLoopOptions;
-use std::{path::Path, rc::Rc, time::Duration};
-use tokio_util::sync::CancellationToken;
 
 /// Represents the set of options accepted by the runtime constructor
 pub use crate::inner_runtime::RuntimeOptions;
@@ -94,6 +96,20 @@ impl Runtime {
         Ok(Self { inner, tokio })
     }
 
+    /// Creates a new instance of the runtime with the provided options and a borrowed tokio runtime handle.  
+    /// See [`Runtime::new`] for more information.
+    ///
+    /// # Errors
+    /// Can fail if the deno runtime initialization fails (usually issues with extensions)
+    pub fn with_tokio_runtime_handle(
+        options: RuntimeOptions,
+        handle: tokio::runtime::Handle,
+    ) -> Result<Self, Error> {
+        let tokio = AsyncBridge::with_runtime_handle(options.timeout, handle);
+        let inner = InnerRuntime::new(options, tokio.heap_exhausted_token())?;
+        Ok(Self { inner, tokio })
+    }
+
     /// Access the underlying deno runtime instance directly
     pub fn deno_runtime(&mut self) -> &mut deno_core::JsRuntime {
         self.inner.deno_runtime()
@@ -101,7 +117,7 @@ impl Runtime {
 
     /// Access the underlying tokio runtime used for blocking operations
     #[must_use]
-    pub fn tokio_runtime(&self) -> std::rc::Rc<tokio::runtime::Runtime> {
+    pub fn tokio_runtime(&self) -> TokioRuntime {
         self.tokio.tokio_runtime()
     }
 
@@ -121,7 +137,7 @@ impl Runtime {
     /// Destroy the v8 runtime, releasing all resources  
     /// Then the internal tokio runtime will be returned
     #[must_use]
-    pub fn into_tokio_runtime(self) -> Rc<tokio::runtime::Runtime> {
+    pub fn into_tokio_runtime(self) -> TokioRuntime {
         self.tokio.into_tokio_runtime()
     }
 
@@ -146,7 +162,7 @@ impl Runtime {
     }
 
     /// Advance the JS event loop by a single tick  
-    /// See [`Runtime::await_event_loop`] for fully running the event loop
+    /// See [`Runtime::block_on_event_loop`] for fully running the event loop
     ///
     /// Returns true if the event loop has pending work, or false if it has completed
     ///
@@ -157,6 +173,24 @@ impl Runtime {
     /// Can fail if a runtime error occurs during the event loop's execution
     pub fn advance_event_loop(&mut self, options: PollEventLoopOptions) -> Result<bool, Error> {
         self.block_on(|runtime| async move { runtime.inner.advance_event_loop(options).await })
+    }
+
+    /// Advance the JS event loop by a single tick  
+    /// See [`Runtime::await_event_loop`] for fully running the event loop
+    ///
+    /// Returns a future that resolves true if the event loop has pending work, or false if it
+    /// has completed
+    ///
+    /// # Arguments
+    /// * `options` - Options for the event loop polling, see [`deno_core::PollEventLoopOptions`]
+    ///
+    /// # Errors
+    /// Can fail if a runtime error occurs during the event loop's execution
+    pub async fn advance_event_loop_async(
+        &mut self,
+        options: PollEventLoopOptions,
+    ) -> Result<bool, Error> {
+        self.inner.advance_event_loop(options).await
     }
 
     /// Run the JS event loop to completion, or until a timeout is reached  
@@ -1134,7 +1168,7 @@ mod test_runtime {
 
         extension!(test_extension);
         Runtime::new(RuntimeOptions {
-            extensions: vec![test_extension::init_ops_and_esm()],
+            extensions: vec![test_extension::init()],
             ..Default::default()
         })
         .expect("Could not create runtime with extensions");

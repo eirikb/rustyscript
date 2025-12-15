@@ -1,5 +1,6 @@
 #![allow(unused_variables)]
 #![allow(clippy::derivable_impls)]
+
 use deno_core::{
     v8::{BackingStore, SharedRef},
     CrossIsolateStore, Extension,
@@ -10,20 +11,23 @@ pub mod rustyscript;
 trait ExtensionTrait<A> {
     fn init(options: A) -> Extension;
 
-    /// Makes a call to `init_ops_and_esm` equivalent to `init_ops`
-    fn set_esm(mut ext: Extension, is_snapshot: bool) -> Extension {
-        if is_snapshot {
-            ext.js_files = ::std::borrow::Cow::Borrowed(&[]);
-            ext.esm_files = ::std::borrow::Cow::Borrowed(&[]);
-            ext.esm_entry_point = ::std::option::Option::None;
-        }
+    // Clears the js and esm files for warmup to avoid reloading them
+    fn for_warmup(mut ext: Extension) -> Extension {
+        ext.js_files = ::std::borrow::Cow::Borrowed(&[]);
+        ext.esm_files = ::std::borrow::Cow::Borrowed(&[]);
+        ext.esm_entry_point = ::std::option::Option::None;
+
         ext
     }
 
     /// Builds an extension
     fn build(options: A, is_snapshot: bool) -> Extension {
-        let ext = Self::init(options);
-        Self::set_esm(ext, is_snapshot)
+        let ext: Extension = Self::init(options);
+        if is_snapshot {
+            Self::for_warmup(ext)
+        } else {
+            ext
+        }
     }
 }
 
@@ -120,7 +124,7 @@ pub struct ExtensionOptions {
     /// Requires the `cache` feature to be enabled
     #[cfg(feature = "cache")]
     #[cfg_attr(docsrs, doc(cfg(feature = "cache")))]
-    pub cache: Option<deno_cache::CreateCache<cache::CacheBackend>>,
+    pub cache: Option<deno_cache::CreateCache>,
 
     /// Filesystem implementation for the `deno_fs` extension
     ///
@@ -151,7 +155,7 @@ pub struct ExtensionOptions {
     /// Requires the `node_experimental` feature to be enabled
     #[cfg(feature = "node_experimental")]
     #[cfg_attr(docsrs, doc(cfg(feature = "node_experimental")))]
-    pub node_resolver: std::sync::Arc<node::RustyResolver>,
+    pub node_resolver: std::sync::Arc<node::resolvers::RustyResolver>,
 }
 
 impl Default for ExtensionOptions {
@@ -170,7 +174,7 @@ impl Default for ExtensionOptions {
             webstorage_origin_storage_dir: None,
 
             #[cfg(feature = "cache")]
-            cache: Some(cache::CacheBackend::new_memory()),
+            cache: None,
 
             #[cfg(feature = "fs")]
             filesystem: std::sync::Arc::new(deno_fs::RealFs),
@@ -182,7 +186,7 @@ impl Default for ExtensionOptions {
             kv_store: kv::KvStore::default(),
 
             #[cfg(feature = "node_experimental")]
-            node_resolver: std::sync::Arc::new(node::RustyResolver::default()),
+            node_resolver: std::sync::Arc::new(node::resolvers::RustyResolver::default()),
         }
     }
 }

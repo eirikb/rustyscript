@@ -1,16 +1,20 @@
+use std::{borrow::Cow, path::Path, sync::Arc};
+
+use deno_core::{extension, Extension};
+use deno_node::NodePermissions;
+use deno_permissions::{CheckedPath, PermissionCheckError, PermissionDeniedError};
+use deno_resolver::npm::DenoInNpmPackageChecker;
+use resolvers::{RustyNpmPackageFolderResolver, RustyResolver};
+use sys_traits::impls::RealSys;
+
 use super::{
     web::{PermissionsContainer, SystemsPermissionKind},
     ExtensionTrait,
 };
-use deno_core::{extension, Extension};
-use deno_node::NodePermissions;
-use deno_permissions::PermissionCheckError;
-use std::{path::Path, sync::Arc};
 
 mod cjs_translator;
-mod resolvers;
+pub mod resolvers;
 pub use cjs_translator::NodeCodeTranslator;
-pub use resolvers::RustyResolver;
 
 extension!(
     init_node,
@@ -20,15 +24,17 @@ extension!(
 );
 impl ExtensionTrait<()> for init_node {
     fn init((): ()) -> Extension {
-        init_node::init_ops_and_esm()
+        init_node::init()
     }
 }
 impl ExtensionTrait<Arc<RustyResolver>> for deno_node::deno_node {
     fn init(resolver: Arc<RustyResolver>) -> Extension {
-        deno_node::deno_node::init_ops_and_esm::<PermissionsContainer>(
-            Some(resolver.init_services()),
-            resolver.filesystem(),
-        )
+        deno_node::deno_node::init::<
+            PermissionsContainer,
+            DenoInNpmPackageChecker,
+            RustyNpmPackageFolderResolver,
+            RealSys,
+        >(Some(resolver.init_services()), resolver.filesystem())
     }
 }
 
@@ -49,9 +55,26 @@ impl NodePermissions for PermissionsContainer {
         Ok(())
     }
 
-    fn check_read(&mut self, path: &str) -> Result<std::path::PathBuf, PermissionCheckError> {
-        let p = self.0.check_read(Path::new(path), None)?;
-        Ok(p.into_owned())
+    fn check_open<'a>(
+        &mut self,
+        path: Cow<'a, Path>,
+        open_access: deno_permissions::OpenAccessKind,
+        api_name: Option<&str>,
+    ) -> Result<deno_permissions::CheckedPath<'a>, PermissionCheckError> {
+        let read = open_access.is_read();
+        let write = open_access.is_write();
+
+        let p = self
+            .0
+            .check_open(true, read, write, path, api_name.unwrap_or_default())
+            .ok_or(PermissionCheckError::PermissionDenied(
+                PermissionDeniedError {
+                    access: api_name.unwrap_or_default().to_string(),
+                    name: "open",
+                },
+            ))?;
+
+        Ok(CheckedPath::unsafe_new(p))
     }
 
     fn check_net_url(
@@ -63,26 +86,6 @@ impl NodePermissions for PermissionsContainer {
         Ok(())
     }
 
-    fn check_read_with_api_name(
-        &mut self,
-        path: &str,
-        api_name: Option<&str>,
-    ) -> Result<std::path::PathBuf, PermissionCheckError> {
-        let p = self
-            .0
-            .check_read(Path::new(path), api_name)
-            .map(std::borrow::Cow::into_owned)?;
-        Ok(p)
-    }
-
-    fn check_read_path<'a>(
-        &mut self,
-        path: &'a std::path::Path,
-    ) -> Result<std::borrow::Cow<'a, std::path::Path>, PermissionCheckError> {
-        let p = self.0.check_read(path, None)?;
-        Ok(p)
-    }
-
     fn query_read_all(&mut self) -> bool {
         self.0.check_read_all(None).is_ok()
     }
@@ -91,17 +94,5 @@ impl NodePermissions for PermissionsContainer {
         let kind = SystemsPermissionKind::new(kind);
         self.0.check_sys(kind, api_name)?;
         Ok(())
-    }
-
-    fn check_write_with_api_name(
-        &mut self,
-        path: &str,
-        api_name: Option<&str>,
-    ) -> Result<std::path::PathBuf, PermissionCheckError> {
-        let p = self
-            .0
-            .check_write(Path::new(path), api_name)
-            .map(std::borrow::Cow::into_owned)?;
-        Ok(p)
     }
 }

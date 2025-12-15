@@ -1,5 +1,6 @@
-use super::ExtensionTrait;
 use deno_core::{extension, Extension};
+
+use super::ExtensionTrait;
 
 extension!(
     init_url,
@@ -9,12 +10,12 @@ extension!(
 );
 impl ExtensionTrait<()> for init_url {
     fn init((): ()) -> Extension {
-        init_url::init_ops_and_esm()
+        init_url::init()
     }
 }
 impl ExtensionTrait<()> for deno_url::deno_url {
     fn init((): ()) -> Extension {
-        deno_url::deno_url::init_ops_and_esm()
+        deno_url::deno_url::init()
     }
 }
 

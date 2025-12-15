@@ -1,5 +1,4 @@
-use crate::module_loader::ImportProvider;
-use crate::{Error, RuntimeOptions};
+use crate::{module_loader::ImportProvider, Error, RuntimeOptions};
 
 /// A builder for creating a new runtime
 ///
@@ -28,7 +27,6 @@ impl RuntimeBuilder {
     ///
     /// This can be used to add custom functionality to the runtime
     ///
-    /// If the extension is for use with a snapshot, create the extension with `init_ops` instead of `init_ops_and_esm`
     #[must_use]
     pub fn with_extension(mut self, extension: deno_core::Extension) -> Self {
         self.0.extensions.push(extension);
@@ -39,7 +37,6 @@ impl RuntimeBuilder {
     ///
     /// This can be used to add custom functionality to the runtime
     ///
-    /// If the extension is for use with a snapshot, create the extension with `init_ops` instead of `init_ops_and_esm`
     #[must_use]
     pub fn with_extensions(mut self, extensions: Vec<deno_core::Extension>) -> Self {
         self.0.extensions.extend(extensions);
@@ -81,8 +78,6 @@ impl RuntimeBuilder {
     /// Set the startup snapshot for the runtime
     ///
     /// This will reduce load times, but requires the same extensions to be loaded as when the snapshot was created
-    ///
-    /// If provided, user-supplied extensions must be instantiated with `init_ops` instead of `init_ops_and_esm`
     ///
     /// WARNING: Snapshots MUST be used on the same system they were created on
     #[must_use]
@@ -158,7 +153,7 @@ impl RuntimeBuilder {
     #[cfg(feature = "cache")]
     #[cfg_attr(docsrs, doc(cfg(feature = "cache")))]
     #[must_use]
-    pub fn with_cache(mut self, cache: deno_cache::CreateCache<crate::CacheBackend>) -> Self {
+    pub fn with_cache(mut self, cache: deno_cache::CreateCache) -> Self {
         self.0.extension_options.cache = Some(cache);
         self
     }
@@ -242,7 +237,7 @@ impl RuntimeBuilder {
     #[must_use]
     pub fn with_web_request_builder_hook(
         mut self,
-        hook: fn(&mut http::Request<deno_fetch::ReqBody>) -> Result<(), deno_core::error::AnyError>,
+        hook: fn(&mut http::Request<deno_fetch::ReqBody>) -> Result<(), deno_error::JsErrorBox>,
     ) -> Self {
         self.0.extension_options.web.request_builder_hook = Some(hook);
         self

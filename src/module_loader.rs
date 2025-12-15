@@ -1,18 +1,19 @@
 //! Module loader implementation for rustyscript
 //! This module provides tools for caching module data, resolving module specifiers, and loading modules
 #![allow(deprecated)]
-use deno_core::{anyhow::Error, ModuleLoader, ModuleSpecifier};
-use std::{cell::RefCell, path::PathBuf, rc::Rc};
 
-mod cache_provider;
-mod import_provider;
+use std::{borrow::Cow, cell::RefCell, path::PathBuf, rc::Rc};
+
+use deno_core::{error::ModuleLoaderError, ModuleLoader, ModuleSpecifier};
+
 mod inner_loader;
-
 use inner_loader::InnerRustyLoader;
 pub(crate) use inner_loader::LoaderOptions;
 
-// Public exports
+mod cache_provider;
 pub use cache_provider::{ClonableSource, ModuleCacheProvider};
+
+mod import_provider;
 pub use import_provider::ImportProvider;
 
 use crate::transpiler::ExtensionTranspiler;
@@ -34,11 +35,11 @@ impl RustyLoader {
         self.inner_mut().set_current_dir(current_dir);
     }
 
-    fn inner(&self) -> std::cell::Ref<InnerRustyLoader> {
+    fn inner(&self) -> std::cell::Ref<'_, InnerRustyLoader> {
         self.inner.borrow()
     }
 
-    fn inner_mut(&self) -> std::cell::RefMut<InnerRustyLoader> {
+    fn inner_mut(&self) -> std::cell::RefMut<'_, InnerRustyLoader> {
         self.inner.borrow_mut()
     }
 
@@ -61,7 +62,7 @@ impl RustyLoader {
         &self,
         specifier: &ModuleSpecifier,
         source: &str,
-    ) -> Result<String, Error> {
+    ) -> Result<String, crate::Error> {
         InnerRustyLoader::translate_cjs(self.inner.clone(), specifier.clone(), source.to_string())
             .await
     }
@@ -81,7 +82,7 @@ impl ModuleLoader for RustyLoader {
         specifier: &str,
         referrer: &str,
         kind: deno_core::ResolutionKind,
-    ) -> Result<ModuleSpecifier, Error> {
+    ) -> Result<ModuleSpecifier, ModuleLoaderError> {
         self.inner_mut().resolve(specifier, referrer, kind)
     }
 
@@ -103,8 +104,10 @@ impl ModuleLoader for RustyLoader {
         )
     }
 
-    fn get_source_map(&self, file_name: &str) -> Option<Vec<u8>> {
-        self.inner().get_source_map(file_name)?.1.clone()
+    fn get_source_map(&self, file_name: &str) -> Option<Cow<'_, [u8]>> {
+        let inner = self.inner();
+        let map = inner.get_source_map(file_name)?.1.as_deref()?;
+        Some(Cow::Owned(map.to_vec()))
     }
 
     fn get_source_mapped_source_line(&self, file_name: &str, line_number: usize) -> Option<String> {
@@ -199,7 +202,7 @@ mod test {
             specifier: &ModuleSpecifier,
             _referrer: &str,
             _kind: deno_core::ResolutionKind,
-        ) -> Option<Result<ModuleSpecifier, deno_core::anyhow::Error>> {
+        ) -> Option<Result<ModuleSpecifier, ModuleLoaderError>> {
             match specifier.scheme() {
                 "test" => {
                     self.i += 1;
@@ -216,7 +219,7 @@ mod test {
             _referrer: Option<&ModuleSpecifier>,
             _is_dyn_import: bool,
             _requested_module_type: deno_core::RequestedModuleType,
-        ) -> Option<Result<String, deno_core::anyhow::Error>> {
+        ) -> Option<Result<String, ModuleLoaderError>> {
             match specifier.as_str() {
                 "test://1" => Some(Ok("console.log('Rock')".to_string())),
                 "test://2" => Some(Ok("console.log('Paper')".to_string())),
@@ -230,6 +233,7 @@ mod test {
     async fn test_import_provider() {
         let loader = RustyLoader::new(LoaderOptions {
             import_provider: Some(Box::new(TestImportProvider::new())),
+            cwd: std::env::current_dir().unwrap(),
             ..LoaderOptions::default()
         });
         let expected_responses = [

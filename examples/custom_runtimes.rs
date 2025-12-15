@@ -1,16 +1,16 @@
-///
-/// This example demonstrates extending Runtime to inline your own extensions and modules
-/// as well as enforce values for the Runtime's options
-///
-/// This example creates a runtime which will timeout after 0.5s, imports an exension,
-/// And ensures that a preset module is always available for import.
-///
-/// Extensions like the one being used (see examples/ext/example_extension.rs)
-/// allow you to call rust code from within JS
-///
-/// Extensions consist of a set of #[op2] functions, an extension! macro,
-/// and one or more optional JS modules.
-///
+//!
+//! This example demonstrates extending Runtime to inline your own extensions and modules
+//! as well as enforce values for the Runtime's options
+//!
+//! This example creates a runtime which will timeout after 0.5s, imports an exension,
+//! And ensures that a preset module is always available for import.
+//!
+//! Extensions like the one being used (see examples/ext/example_extension.rs)
+//! allow you to call rust code from within JS
+//!
+//! Extensions consist of a set of #[op2] functions, an extension! macro,
+//! and one or more optional JS modules.
+//!
 use rustyscript::{module, Error, Module, ModuleHandle, Runtime, RuntimeOptions};
 use std::time::Duration;
 
@@ -33,7 +33,7 @@ impl MyRuntime {
     /// Create a new instance of the runtime
     pub fn new() -> Result<Self, Error> {
         let mut runtime = Self(Runtime::new(RuntimeOptions {
-            extensions: vec![example_extension::example_extension::init_ops_and_esm()],
+            extensions: vec![example_extension::example_extension::init()],
             timeout: Duration::from_millis(500),
             ..Default::default()
         })?);

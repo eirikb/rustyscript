@@ -1,10 +1,11 @@
-use super::V8Value;
-use crate::{async_bridge::AsyncBridgeExt, Error};
 use deno_core::{
     v8::{self, PromiseState},
     PollEventLoopOptions,
 };
 use serde::Deserialize;
+
+use super::V8Value;
+use crate::{async_bridge::AsyncBridgeExt, Error};
 
 /// A Deserializable javascript promise, that can be stored and used later
 /// Must live as long as the runtime it was birthed from
@@ -24,7 +25,7 @@ impl<T> Promise<T>
 where
     T: serde::de::DeserializeOwned,
 {
-    pub(crate) async fn resolve<'a>(
+    pub(crate) async fn resolve(
         self,
         runtime: &mut deno_core::JsRuntime,
     ) -> Result<T, crate::Error> {
@@ -42,7 +43,7 @@ where
     /// # Errors
     /// Will return an error if the promise cannot be resolved into the given type,
     /// or if a runtime error occurs
-    pub async fn into_future<'a>(self, runtime: &mut crate::Runtime) -> Result<T, crate::Error> {
+    pub async fn into_future(self, runtime: &mut crate::Runtime) -> Result<T, crate::Error> {
         self.resolve(runtime.deno_runtime()).await
     }
 

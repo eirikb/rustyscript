@@ -1,39 +1,46 @@
 // Copyright 2018-2024 the Deno authors. All rights reserved. MIT license.
+use std::{borrow::Cow, cell::RefCell, collections::HashMap, sync::Arc};
 
-use std::borrow::Cow;
-use std::cell::RefCell;
-use std::collections::HashMap;
-use std::sync::Arc;
-
-use deno_ast::MediaType;
-use deno_ast::ModuleSpecifier;
-use deno_core::error::AnyError;
+use deno_ast::{MediaType, ModuleSpecifier};
+use deno_error::JsErrorBox;
+use deno_permissions::CheckedPathBuf;
+use deno_resolver::npm::DenoInNpmPackageChecker;
 use deno_runtime::deno_fs;
-use deno_runtime::deno_node::DenoFsNodeResolverEnv;
-use node_resolver::analyze::CjsAnalysis as ExtNodeCjsAnalysis;
-use node_resolver::analyze::CjsAnalysisExports;
-use serde::Deserialize;
-use serde::Serialize;
+use node_resolver::{
+    analyze::{CjsAnalysis as ExtNodeCjsAnalysis, CjsAnalysisExports, EsmAnalysisMode},
+    DenoIsBuiltInNodeModuleChecker,
+};
+use serde::{Deserialize, Serialize};
+use sys_traits::impls::RealSys;
 
-use super::RustyResolver;
+use super::resolvers::RustyNpmPackageFolderResolver;
+use super::resolvers::RustyResolver;
 
-pub type NodeCodeTranslator =
-    node_resolver::analyze::NodeCodeTranslator<RustyCjsCodeAnalyzer, DenoFsNodeResolverEnv>;
+pub type NodeCodeTranslator = node_resolver::analyze::NodeCodeTranslator<
+    RustyCjsCodeAnalyzer,
+    DenoInNpmPackageChecker,
+    DenoIsBuiltInNodeModuleChecker,
+    RustyNpmPackageFolderResolver,
+    RealSys,
+>;
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum CjsAnalysis {
     /// The module was found to be an ES module.
-    Esm,
+    Esm(String, Option<CjsAnalysisExports>),
     /// The module was CJS.
     Cjs {
         exports: Vec<String>,
         reexports: Vec<String>,
     },
 }
-impl<'a> From<ExtNodeCjsAnalysis<'a>> for CjsAnalysis {
+
+impl From<ExtNodeCjsAnalysis<'_>> for CjsAnalysis {
     fn from(analysis: ExtNodeCjsAnalysis) -> Self {
         match analysis {
-            ExtNodeCjsAnalysis::Esm(_) => CjsAnalysis::Esm,
+            ExtNodeCjsAnalysis::Esm(source, exports) => {
+                CjsAnalysis::Esm(source.into_owned(), exports)
+            }
             ExtNodeCjsAnalysis::Cjs(analysis) => CjsAnalysis::Cjs {
                 exports: analysis.exports,
                 reexports: analysis.reexports,
@@ -69,7 +76,7 @@ impl RustyCjsCodeAnalyzer {
         &self,
         specifier: &ModuleSpecifier,
         source: &str,
-    ) -> Result<CjsAnalysis, AnyError> {
+    ) -> Result<CjsAnalysis, JsErrorBox> {
         if let Some(analysis) = self.cache.borrow().get(specifier.as_str()) {
             return Ok(analysis.clone());
         }
@@ -89,7 +96,8 @@ impl RustyCjsCodeAnalyzer {
             capture_tokens: true,
             scope_analysis: false,
             maybe_syntax: None,
-        })?;
+        })
+        .map_err(JsErrorBox::from_err)?;
         let is_script = parsed_source.compute_is_script();
         let is_cjs = self
             .cjs_tracker
@@ -97,7 +105,7 @@ impl RustyCjsCodeAnalyzer {
         let analysis = if is_cjs {
             parsed_source.analyze_cjs().into()
         } else {
-            CjsAnalysis::Esm
+            CjsAnalysis::Esm(source.to_string(), None)
         };
 
         self.cache
@@ -111,10 +119,19 @@ impl RustyCjsCodeAnalyzer {
         &self,
         specifier: &ModuleSpecifier,
         source: Cow<'a, str>,
-    ) -> Result<ExtNodeCjsAnalysis<'a>, AnyError> {
+        esm_analysis_mode: EsmAnalysisMode,
+    ) -> Result<ExtNodeCjsAnalysis<'a>, JsErrorBox> {
         let analysis = self.inner_cjs_analysis(specifier, &source)?;
         match analysis {
-            CjsAnalysis::Esm => Ok(ExtNodeCjsAnalysis::Esm(source)),
+            CjsAnalysis::Esm(source, Some(CjsAnalysisExports { exports, reexports }))
+                if esm_analysis_mode == EsmAnalysisMode::SourceOnly =>
+            {
+                Ok(ExtNodeCjsAnalysis::Esm(
+                    Cow::Owned(source),
+                    Some(CjsAnalysisExports { exports, reexports }),
+                ))
+            }
+            CjsAnalysis::Esm(source, _) => Ok(ExtNodeCjsAnalysis::Esm(Cow::Owned(source), None)),
             CjsAnalysis::Cjs { exports, reexports } => {
                 Ok(ExtNodeCjsAnalysis::Cjs(CjsAnalysisExports {
                     exports,
@@ -131,13 +148,16 @@ impl node_resolver::analyze::CjsCodeAnalyzer for RustyCjsCodeAnalyzer {
         &self,
         specifier: &ModuleSpecifier,
         source: Option<Cow<'a, str>>,
-    ) -> Result<ExtNodeCjsAnalysis<'a>, AnyError> {
+        esm_analysis_mode: EsmAnalysisMode,
+    ) -> Result<ExtNodeCjsAnalysis<'a>, JsErrorBox> {
         let source = match source {
             Some(source) => source,
             None => {
                 if let Ok(path) = specifier.to_file_path() {
-                    if let Ok(source_from_file) =
-                        self.fs.read_text_file_lossy_async(path, None).await
+                    if let Ok(source_from_file) = self
+                        .fs
+                        .read_text_file_lossy_async(CheckedPathBuf::unsafe_new(path))
+                        .await
                     {
                         source_from_file
                     } else {
@@ -155,6 +175,6 @@ impl node_resolver::analyze::CjsCodeAnalyzer for RustyCjsCodeAnalyzer {
             }
         };
 
-        self.analyze_cjs(specifier, source)
+        self.analyze_cjs(specifier, source, esm_analysis_mode)
     }
 }

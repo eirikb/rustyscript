@@ -1,6 +1,8 @@
-use super::ExtensionTrait;
-use deno_core::{extension, Extension};
 use std::sync::Arc;
+
+use deno_core::{extension, Extension};
+
+use super::ExtensionTrait;
 
 mod options;
 pub use options::WebOptions;
@@ -8,9 +10,20 @@ pub use options::WebOptions;
 mod permissions;
 pub(crate) use permissions::PermissionsContainer;
 pub use permissions::{
-    AllowlistWebPermissions, DefaultWebPermissions, PermissionDenied, SystemsPermissionKind,
-    WebPermissions,
+    AllowlistWebPermissions, CheckedPath, DefaultWebPermissions, PermissionCheckError,
+    PermissionDeniedError, SystemsPermissionKind, WebPermissions,
 };
+
+/// Stub for a node op deno_net expects to find
+/// We return None to show no cert available
+#[deno_core::op2]
+#[serde]
+pub fn op_tls_peer_certificate(
+    #[smi] _rid: u32,
+    _detailed: bool,
+) -> Option<deno_core::serde_json::Value> {
+    None
+}
 
 extension!(
     init_fetch,
@@ -20,7 +33,7 @@ extension!(
 );
 impl ExtensionTrait<WebOptions> for init_fetch {
     fn init(options: WebOptions) -> Extension {
-        init_fetch::init_ops_and_esm()
+        init_fetch::init()
     }
 }
 impl ExtensionTrait<WebOptions> for deno_fetch::deno_fetch {
@@ -37,24 +50,37 @@ impl ExtensionTrait<WebOptions> for deno_fetch::deno_fetch {
             resolver: options.resolver.clone(),
         };
 
-        deno_fetch::deno_fetch::init_ops_and_esm::<PermissionsContainer>(options)
+        deno_fetch::deno_fetch::init::<PermissionsContainer>(options)
     }
 }
 
+#[cfg(not(feature = "node_experimental"))]
+extension!(
+    init_net,
+    deps = [rustyscript],
+    ops = [op_tls_peer_certificate],
+    esm_entry_point = "ext:init_net/init_net.js",
+    esm = [ dir "src/ext/web", "init_net.js" ],
+);
+
+#[cfg(feature = "node_experimental")]
 extension!(
     init_net,
     deps = [rustyscript],
     esm_entry_point = "ext:init_net/init_net.js",
     esm = [ dir "src/ext/web", "init_net.js" ],
 );
+
 impl ExtensionTrait<WebOptions> for init_net {
     fn init(options: WebOptions) -> Extension {
-        init_net::init_ops_and_esm()
+        let provider = rustls::crypto::aws_lc_rs::default_provider();
+        let _ = rustls::crypto::CryptoProvider::install_default(provider); // Failure means already done for us
+        init_net::init()
     }
 }
 impl ExtensionTrait<WebOptions> for deno_net::deno_net {
     fn init(options: WebOptions) -> Extension {
-        deno_net::deno_net::init_ops_and_esm::<PermissionsContainer>(
+        deno_net::deno_net::init::<PermissionsContainer>(
             options.root_cert_store_provider.clone(),
             options.unsafely_ignore_certificate_errors.clone(),
         )
@@ -69,13 +95,13 @@ extension!(
 );
 impl ExtensionTrait<()> for init_telemetry {
     fn init((): ()) -> Extension {
-        init_telemetry::init_ops_and_esm()
+        init_telemetry::init()
     }
 }
 
 impl ExtensionTrait<()> for deno_telemetry::deno_telemetry {
     fn init((): ()) -> Extension {
-        deno_telemetry::deno_telemetry::init_ops_and_esm()
+        deno_telemetry::deno_telemetry::init()
     }
 }
 
@@ -91,22 +117,19 @@ extension!(
 );
 impl ExtensionTrait<WebOptions> for init_web {
     fn init(options: WebOptions) -> Extension {
-        init_web::init_ops_and_esm(options.permissions)
+        init_web::init(options.permissions)
     }
 }
 
 impl ExtensionTrait<WebOptions> for deno_web::deno_web {
     fn init(options: WebOptions) -> Extension {
-        deno_web::deno_web::init_ops_and_esm::<PermissionsContainer>(
-            options.blob_store,
-            options.base_url,
-        )
+        deno_web::deno_web::init::<PermissionsContainer>(options.blob_store, options.base_url)
     }
 }
 
 impl ExtensionTrait<()> for deno_tls::deno_tls {
     fn init((): ()) -> Extension {
-        deno_tls::deno_tls::init_ops_and_esm()
+        deno_tls::deno_tls::init()
     }
 }
 

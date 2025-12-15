@@ -1,11 +1,14 @@
-use super::{web::PermissionsContainer, ExtensionTrait};
+use std::{borrow::Cow, path::PathBuf};
+
 use deno_core::{extension, Extension};
 use deno_kv::{
     dynamic::MultiBackendDbHandler,
     remote::{RemoteDbHandler, RemoteDbHandlerPermissions},
     sqlite::{SqliteDbHandler, SqliteDbHandlerPermissions},
 };
-use std::path::PathBuf;
+use deno_permissions::{CheckedPath, PermissionCheckError, PermissionDeniedError};
+
+use super::{web::PermissionsContainer, ExtensionTrait};
 
 extension!(
     init_kv,
@@ -15,12 +18,12 @@ extension!(
 );
 impl ExtensionTrait<()> for init_kv {
     fn init((): ()) -> Extension {
-        init_kv::init_ops_and_esm()
+        init_kv::init()
     }
 }
 impl ExtensionTrait<KvStore> for deno_kv::deno_kv {
     fn init(store: KvStore) -> Extension {
-        deno_kv::deno_kv::init_ops_and_esm(store.handler(), store.config())
+        deno_kv::deno_kv::init(store.handler(), store.config())
     }
 }
 
@@ -174,22 +177,23 @@ impl Default for KvStore {
 }
 
 impl SqliteDbHandlerPermissions for PermissionsContainer {
-    fn check_read(
+    fn check_open<'a>(
         &mut self,
-        p: &str,
+        path: Cow<'a, std::path::Path>,
+        open_access: deno_permissions::OpenAccessKind,
         api_name: &str,
-    ) -> Result<std::path::PathBuf, deno_permissions::PermissionCheckError> {
-        let p = self.0.check_read(std::path::Path::new(p), Some(api_name))?;
-        Ok(p.to_path_buf())
-    }
+    ) -> Result<CheckedPath<'a>, deno_permissions::PermissionCheckError> {
+        let read = open_access.is_read();
+        let write = open_access.is_write();
 
-    fn check_write<'a>(
-        &mut self,
-        p: &'a std::path::Path,
-        api_name: &str,
-    ) -> Result<std::borrow::Cow<'a, std::path::Path>, deno_permissions::PermissionCheckError> {
-        let p = self.0.check_write(p, Some(api_name))?;
-        Ok(p)
+        let p = self.0.check_open(true, read, write, path, api_name).ok_or(
+            PermissionCheckError::PermissionDenied(PermissionDeniedError {
+                access: api_name.to_string(),
+                name: "open",
+            }),
+        )?;
+
+        Ok(CheckedPath::unsafe_new(p))
     }
 }
 
