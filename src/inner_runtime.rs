@@ -146,7 +146,7 @@ pub struct RuntimeOptions {
 
     /// Optional snapshot to load into the runtime
     ///
-    /// This will reduce load times, but requires the same extensions to be loaded as when the snapshot was created  
+    /// This will reduce load times, but requires the same extensions to be loaded as when the snapshot was created
     ///
     /// WARNING: Snapshots MUST be used on the same system they were created on
     pub startup_snapshot: Option<&'static [u8]>,
@@ -651,33 +651,34 @@ impl<RT: RuntimeTrait> InnerRuntime<RT> {
     {
         // Manually implement tokio::select
         std::future::poll_fn(|cx| {
-            let evt_status = self.deno_runtime().poll_event_loop(cx, poll_options);
-            let fut_status = fut.poll_unpin(cx);
-
-            match (evt_status, fut_status) {
-                (Poll::Ready(Err(e)), _) => {
-                    // Event loop failed
-                    Poll::Ready(Err(e.into()))
-                }
-
-                (_, Poll::Pending) => {
-                    // Continue polling
-                    Poll::Pending
-                }
-
-                (_, Poll::Ready(t)) => {
-                    for _ in 0..100 {
-                        if let Poll::Ready(Err(e)) =
-                            self.deno_runtime().poll_event_loop(cx, poll_options)
-                        {
+            if let Poll::Ready(t) = fut.poll_unpin(cx) {
+                let mut iterations = 0;
+                // Drain the event loop until there's no immediate work.
+                // 100 is an arbitrary limit to prevent infinite loops.
+                while iterations < 100 {
+                    iterations += 1;
+                    match self.deno_runtime().poll_event_loop(cx, poll_options) {
+                        Poll::Ready(Err(e)) => {
+                            // If the event loop fails, return the error.
                             return Poll::Ready(Err(e.into()));
                         }
+                        Poll::Ready(Ok(())) => {
+                            // Event loop completed - no more work.
+                            break;
+                        }
+                        Poll::Pending => {
+                            // No more work right now—break out.
+                            break;
+                        }
                     }
-
-                    // Future resolved
-                    Poll::Ready(t.map_err(Into::into))
                 }
+                return Poll::Ready(t.map_err(Into::into));
             }
+
+            // Poll event loop to process pending async work
+            let _ = self.deno_runtime().poll_event_loop(cx, poll_options);
+
+            Poll::Pending
         })
         .await
     }
@@ -1400,6 +1401,32 @@ mod test_inner_runtime {
                 .expect("could not call function");
             assert_v8!(value, 4, usize, runtime);
 
+            Ok(())
+        });
+    }
+
+    #[cfg(any(feature = "web", feature = "web_stub"))]
+    #[test]
+    fn test_await_then_throw() {
+        let module = Module::new(
+            "test.js",
+            "
+            await new Promise(r => setTimeout(r));
+            throw 'this does not throw';
+            ",
+        );
+
+        let mut runtime =
+            InnerRuntime::<JsRuntime>::new(RuntimeOptions::default(), CancellationToken::new())
+                .expect("Could not load runtime");
+
+        let rt = &mut runtime;
+        run_async_task(|| async move {
+            let result = rt.load_modules(Some(&module), vec![]).await;
+            assert!(
+                result.is_err(),
+                "Expected error from throw after await, but got success"
+            );
             Ok(())
         });
     }
