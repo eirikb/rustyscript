@@ -717,25 +717,9 @@ impl<RT: RuntimeTrait> InnerRuntime<RT> {
         // Manually implement tokio::select
         std::future::poll_fn(|cx| {
             if let Poll::Ready(t) = fut.poll_unpin(cx) {
-                let mut iterations = 0;
-                // Drain the event loop until there's no immediate work.
-                // 100 is an arbitrary limit to prevent infinite loops.
-                while iterations < 100 {
-                    iterations += 1;
-                    match self.deno_runtime().poll_event_loop(cx, poll_options) {
-                        Poll::Ready(Err(e)) => {
-                            // If the event loop fails, return the error.
-                            return Poll::Ready(Err(e.into()));
-                        }
-                        Poll::Ready(Ok(())) => {
-                            // Event loop completed - no more work.
-                            break;
-                        }
-                        Poll::Pending => {
-                            // No more work right now—break out.
-                            break;
-                        }
-                    }
+                // Poll event loop one more time to catch any errors
+                if let Poll::Ready(Err(e)) = self.deno_runtime().poll_event_loop(cx, poll_options) {
+                    return Poll::Ready(Err(e.into()));
                 }
                 return Poll::Ready(t.map_err(Into::into));
             }
