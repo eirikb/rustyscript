@@ -23,7 +23,7 @@ use deno_error::JsErrorBox;
 use crate::{
     module_loader::{ClonableSource, ModuleCacheProvider},
     traits::ToModuleSpecifier,
-    transpiler::{transpile, transpile_extension, ExtensionTranspilation},
+    transpiler::{transpile_with_options, transpile_extension_with_options, ExtensionTranspilation, TranspileOptions},
     Error,
 };
 
@@ -69,6 +69,9 @@ pub struct LoaderOptions {
 
     /// The current working directory for the loader
     pub cwd: PathBuf,
+
+    /// Options for transpilation (e.g., inline source maps for debugging)
+    pub transpile_options: TranspileOptions,
 }
 
 #[cfg(feature = "node_experimental")]
@@ -108,6 +111,7 @@ pub struct InnerRustyLoader {
     import_provider: Option<Box<dyn ImportProvider>>,
     schema_whlist: HashSet<String>,
     cwd: PathBuf,
+    transpile_options: TranspileOptions,
 
     #[cfg(feature = "node_experimental")]
     node: NodeProvider,
@@ -124,6 +128,7 @@ impl InnerRustyLoader {
             import_provider: options.import_provider,
             schema_whlist: options.schema_whlist,
             cwd: options.cwd,
+            transpile_options: options.transpile_options,
 
             #[cfg(feature = "node_experimental")]
             node: NodeProvider::new(options.node_resolver),
@@ -149,7 +154,6 @@ impl InnerRustyLoader {
         self.fs_whlist.contains(specifier)
     }
 
-    #[allow(clippy::unused_self)]
     pub fn transpile_extension(
         &self,
         specifier: &FastString,
@@ -160,7 +164,7 @@ impl InnerRustyLoader {
             .to_module_specifier(&self.cwd)
             .map_err(|e| JsErrorBox::from_err(std::io::Error::other(e)))?;
         let code = code.as_str();
-        transpile_extension(&specifier, code)
+        transpile_extension_with_options(&specifier, code, &self.transpile_options)
     }
 
     pub fn resolve(
@@ -523,8 +527,9 @@ impl InnerRustyLoader {
 
         // Load the module code, and transpile it if necessary
         let code = handler(inner.clone(), module_specifier.clone()).await?;
+        let transpile_options = inner.borrow().transpile_options.clone();
         let (tcode, source_map) =
-            transpile(&module_specifier, &code).map_err(ModuleLoaderError::from_err)?;
+            transpile_with_options(&module_specifier, &code, &transpile_options).map_err(ModuleLoaderError::from_err)?;
 
         // Create the module source
         let mut source = ModuleSource::new(

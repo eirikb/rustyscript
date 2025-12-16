@@ -115,6 +115,13 @@ impl Runtime {
         self.inner.deno_runtime()
     }
 
+    /// Wait for debugger session and break on next statement.
+    /// Call this after loading setup code but before user code to break at user code.
+    #[cfg(feature = "inspector")]
+    pub fn wait_for_session_and_break(&mut self) {
+        self.inner.wait_for_session_and_break()
+    }
+
     /// Access the underlying tokio runtime used for blocking operations
     #[must_use]
     pub fn tokio_runtime(&self) -> TokioRuntime {

@@ -323,6 +323,10 @@ mod utilities;
 #[cfg_attr(docsrs, doc(cfg(feature = "worker")))]
 pub mod worker;
 
+#[cfg(feature = "inspector")]
+#[cfg_attr(docsrs, doc(cfg(feature = "inspector")))]
+pub mod inspector;
+
 // Expose a few dependencies that could be useful
 pub use deno_core;
 pub use deno_core::serde_json;

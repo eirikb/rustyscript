@@ -118,7 +118,7 @@ web_stub = ["webidl", "base64-simd"]
     web = [
         "deno_web", "deno_tls", "deno_fetch", "deno_net", "dep:http", "deno_permissions", "deno_telemetry", "deno_fs",
         "webidl", "console", "url", "crypto", "url_import", "fs_import",
-        "hyper-util", "rustls"
+        "dep:hyper-util", "rustls"
     ]
 
     # [https://gpuweb.github.io/gpuweb/]
@@ -151,6 +151,9 @@ worker = []
 # Grants access to op_whitelist::get_whitelist
 # Used in CI to prevent vulnerabilities!
 op_whitelist = []
+
+# Enables V8 inspector for debugging (Chrome DevTools / VS Code / IntelliJ)
+inspector = ["fastwebsockets", "uuid", "http-body-util", "hyper", "log", "dep:hyper-util"]
 
 #
 # End of feature definitions
@@ -233,6 +236,13 @@ once_cell = {version = "^1.17.1", optional = true}
 
 # Dependencies for the web stub feature
 base64-simd = {version = "0.8.0", optional = true}
+
+# Dependencies for the inspector feature
+fastwebsockets = { version = "0.8", optional = true, features = ["upgrade", "unstable-split"] }
+uuid = { version = "1.6", optional = true, features = ["v4"] }
+http-body-util = { version = "0.1", optional = true }
+hyper = { version = "1.4", optional = true, features = ["server", "http1"] }
+log = { version = "0.4", optional = true }
 
 # Dependencies for the node feature
 deno_resolver = { version = "^0.44.0", optional = true }

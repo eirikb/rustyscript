@@ -20,7 +20,7 @@ use crate::{
     ext,
     module_loader::{LoaderOptions, RustyLoader},
     traits::{ToDefinedValue, ToModuleSpecifier, ToV8String},
-    transpiler::transpile,
+    transpiler::{transpile, TranspileOptions},
     utilities, Error, ExtensionOptions, Module, ModuleHandle,
 };
 
@@ -167,6 +167,18 @@ pub struct RuntimeOptions {
     ///
     /// By default only `http`/`https` (`url_import` crate feature), and `file` (`fs_import` crate feature) are allowed
     pub schema_whlist: HashSet<String>,
+
+    /// Optional inspector options for V8 debugging support.
+    /// When set, enables the V8 inspector protocol for debugging with Chrome DevTools, VS Code, or IntelliJ.
+    #[cfg(feature = "inspector")]
+    pub inspector: Option<crate::inspector::InspectorOptions>,
+
+    /// Whether to inline source maps in transpiled output.
+    /// When true, source maps are embedded in the JavaScript code, enabling debuggers
+    /// to show original TypeScript/JSX source in stack traces and breakpoints.
+    /// This is automatically enabled when the inspector feature is used.
+    /// Default: false (source maps are returned separately).
+    pub inline_source_maps: bool,
 }
 
 impl Default for RuntimeOptions {
@@ -184,6 +196,11 @@ impl Default for RuntimeOptions {
             schema_whlist: HashSet::default(),
 
             extension_options: ExtensionOptions::default(),
+
+            #[cfg(feature = "inspector")]
+            inspector: None,
+
+            inline_source_maps: false,
         }
     }
 }
@@ -200,18 +217,33 @@ pub struct InnerRuntime<RT: RuntimeTrait> {
 
     pub cwd: PathBuf,
     pub default_entrypoint: Option<String>,
+
+    /// Inspector server instance (if enabled)
+    #[cfg(feature = "inspector")]
+    pub inspector_server: Option<std::rc::Rc<crate::inspector::InspectorServer>>,
 }
 impl<RT: RuntimeTrait> InnerRuntime<RT> {
     pub fn new(
         options: RuntimeOptions,
         heap_exhausted_token: CancellationToken,
     ) -> Result<Self, Error> {
+        #[cfg(feature = "inspector")]
+        let inspector_options = options.inspector;
+
+        #[cfg(feature = "inspector")]
+        let inline_source_maps = options.inline_source_maps || inspector_options.is_some();
+        #[cfg(not(feature = "inspector"))]
+        let inline_source_maps = options.inline_source_maps;
+
         let cwd = std::env::current_dir()?;
         let module_loader = Rc::new(RustyLoader::new(LoaderOptions {
             cache_provider: options.module_cache,
             import_provider: options.import_provider,
             schema_whlist: options.schema_whlist,
             cwd: cwd.clone(),
+            transpile_options: TranspileOptions {
+                inline_source_maps,
+            },
 
             #[cfg(feature = "node_experimental")]
             node_resolver: options.extension_options.node_resolver.clone(),
@@ -247,6 +279,11 @@ impl<RT: RuntimeTrait> InnerRuntime<RT> {
             }
         };
 
+        #[cfg(feature = "inspector")]
+        let enable_inspector = inspector_options.is_some();
+        #[cfg(not(feature = "inspector"))]
+        let enable_inspector = false;
+
         let mut deno_runtime = RT::try_new(deno_core::RuntimeOptions {
             module_loader: Some(module_loader.clone()),
 
@@ -256,6 +293,8 @@ impl<RT: RuntimeTrait> InnerRuntime<RT> {
 
             startup_snapshot: options.startup_snapshot,
             extensions,
+
+            inspector: enable_inspector,
 
             ..Default::default()
         })?;
@@ -287,11 +326,27 @@ impl<RT: RuntimeTrait> InnerRuntime<RT> {
         }
 
         let default_entrypoint = options.default_entrypoint;
+
+        #[cfg(feature = "inspector")]
+        let inspector_server = if let Some(opts) = inspector_options {
+            let server = crate::inspector::InspectorServer::new(opts.address, opts.name.clone())
+                .map_err(|e| Error::Runtime(format!("Failed to start inspector server: {}", e)))?;
+
+            let inspector = deno_runtime.rt_mut().inspector();
+            server.register_inspector(opts.module_url.clone(), &inspector, opts.wait_for_session);
+
+            Some(std::rc::Rc::new(server))
+        } else {
+            None
+        };
+
         Ok(Self {
             module_loader,
             deno_runtime,
             cwd,
             default_entrypoint,
+            #[cfg(feature = "inspector")]
+            inspector_server,
         })
     }
 
@@ -304,6 +359,16 @@ impl<RT: RuntimeTrait> InnerRuntime<RT> {
     /// Access the underlying deno runtime instance directly
     pub fn deno_runtime(&mut self) -> &mut JsRuntime {
         self.deno_runtime.rt_mut()
+    }
+
+    /// Wait for debugger session and break on next statement.
+    /// Call this after loading setup code but before user code to break at user code.
+    #[cfg(feature = "inspector")]
+    pub fn wait_for_session_and_break(&mut self) {
+        if self.inspector_server.is_some() {
+            let inspector = self.deno_runtime.rt_mut().inspector();
+            crate::inspector::wait_for_session_and_break(&inspector);
+        }
     }
 
     /// Set the current working directory for the runtime

@@ -12,6 +12,16 @@ use deno_error::JsErrorBox;
 /// Contains the results of transpilation
 pub type ModuleContents = (String, Option<SourceMapData>);
 
+/// Options for controlling transpilation behavior
+#[derive(Debug, Clone, Default)]
+pub struct TranspileOptions {
+    /// Whether to inline source maps in the transpiled output.
+    /// When true, source maps are embedded in the JavaScript output,
+    /// which is useful for debugging (e.g., with the V8 inspector).
+    /// When false, source maps are returned separately.
+    pub inline_source_maps: bool,
+}
+
 fn should_transpile(media_type: MediaType) -> bool {
     matches!(
         media_type,
@@ -31,6 +41,16 @@ fn should_transpile(media_type: MediaType) -> bool {
 pub fn transpile(
     module_specifier: &ModuleSpecifier,
     code: &str,
+) -> Result<ModuleContents, TranspileError> {
+    transpile_with_options(module_specifier, code, &TranspileOptions::default())
+}
+
+///
+/// Transpiles source code from TS to JS without typechecking, with configurable options
+pub fn transpile_with_options(
+    module_specifier: &ModuleSpecifier,
+    code: &str,
+    options: &TranspileOptions,
 ) -> Result<ModuleContents, TranspileError> {
     let mut media_type = MediaType::from_specifier(module_specifier);
 
@@ -61,10 +81,16 @@ pub fn transpile(
             ..Default::default()
         };
 
+        let (source_map_option, inline_sources) = if options.inline_source_maps {
+            (deno_ast::SourceMapOption::Inline, true)
+        } else {
+            (deno_ast::SourceMapOption::Separate, false)
+        };
+
         let emit_options = deno_ast::EmitOptions {
             remove_comments: false,
-            source_map: deno_ast::SourceMapOption::Separate,
-            inline_sources: false,
+            source_map: source_map_option,
+            inline_sources,
             ..Default::default()
         };
         let res = parsed
@@ -90,7 +116,18 @@ pub fn transpile_extension(
     specifier: &ModuleSpecifier,
     code: &str,
 ) -> Result<(FastString, Option<Cow<'static, [u8]>>), JsErrorBox> {
-    let (code, source_map) = transpile(specifier, code).map_err(JsErrorBox::from_err)?;
+    transpile_extension_with_options(specifier, code, &TranspileOptions::default())
+}
+
+///
+/// Transpile an extension with configurable options
+#[allow(clippy::type_complexity)]
+pub fn transpile_extension_with_options(
+    specifier: &ModuleSpecifier,
+    code: &str,
+    options: &TranspileOptions,
+) -> Result<(FastString, Option<Cow<'static, [u8]>>), JsErrorBox> {
+    let (code, source_map) = transpile_with_options(specifier, code, options).map_err(JsErrorBox::from_err)?;
     let code = FastString::from(code);
     Ok((code, source_map))
 }
