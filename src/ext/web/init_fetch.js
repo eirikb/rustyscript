@@ -10,8 +10,13 @@ Deno.core.setWasmStreamingCallback(fetch.handleWasmStreaming);
 
 import {applyToGlobal, writeable, nonEnumerable} from 'ext:rustyscript/rustyscript.js';
 
+const originalFetch = fetch.fetch;
 applyToGlobal({
-    fetch: writeable(fetch.fetch),
+    fetch: writeable(function fetch(input, init) {
+        const hook = globalThis.__fetchHook;
+        if (hook) return hook(originalFetch, input, init);
+        return originalFetch(input, init);
+    }),
     Request: nonEnumerable(request.Request),
     Response: nonEnumerable(response.Response),
     Headers: nonEnumerable(headers.Headers),
